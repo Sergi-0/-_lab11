@@ -4,7 +4,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 
-namespace YourNamespace // Çàìåíèòå íà âàøå ïðîñòðàíñòâî èìåí
+namespace StockDataServer
 {
     public class ApplicationContext : DbContext
     {
@@ -21,70 +21,76 @@ namespace YourNamespace // Çàìåíèòå íà âàøå ïðîñòðàíñòâ
     public class Price
     {
         public int Id { get; set; }
-        public int? tickerId { get; set; }
-        public double price { get; set; }
-        public string? date { get; set; }
-        public string? ticker { get; set; }
+        public int? TickerId { get; set; }
+        public double PriceValue { get; set; }
+        public string? RecordDate { get; set; }
+        public string? TickerSymbol { get; set; }
     }
+
     public class Ticker
     {
         public int Id { get; set; }
-        public string? ticker { get; set; }
+        public string? TickerSymbol { get; set; }
     }
+
     public class TodaysCondition
     {
         public int Id { get; set; }
-        public int? tickerId { get; set; }
-        public double? state { get; set; }
-        public string? ticker { get; set; }
+        public int? TickerId { get; set; }
+        public double? PriceState { get; set; }
+        public string? TickerSymbol { get; set; }
     }
 
     public class Program
     {
         static async Task Main()
         {
-            IPEndPoint ipPoint = new IPEndPoint(IPAddress.Any, 8888);
+            IPEndPoint serverEndPoint = new IPEndPoint(IPAddress.Any, 8888);
             using Socket tcpListener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
             try
             {
-                tcpListener.Bind(ipPoint);
+                tcpListener.Bind(serverEndPoint);
                 tcpListener.Listen();
-                Console.WriteLine("Ñåðâåð çàïóùåí. Îæèäàíèå ïîäêëþ÷åíèé... ");
+                Console.WriteLine("Сервер запущен. Ожидание подключений...");
 
                 while (true)
                 {
-                    // ïîëó÷àåì âõîäÿùåå ïîäêëþ÷åíèå
-                    using var tcpClient = await tcpListener.AcceptAsync();
+                    // Получаем входящее подключение
+                    using var clientSocket = await tcpListener.AcceptAsync();
 
-                    var buffer = new List<byte>();
-                    // áóôåð äëÿ ñ÷èòûâàíèÿ îäíîãî áàéòà
-                    var bytesRead = new byte[1];
-                    // ñ÷èòûâàåì äàííûå äî êîíå÷íîãî ñèìâîëà
+                    var receivedDataBuffer = new List<byte>();
+                    // Буфер для считывания одного байта
+                    var singleByteBuffer = new byte[1];
+                    
+                    // Считываем данные до конечного символа
                     while (true)
                     {
-                        var count = await tcpClient.ReceiveAsync(bytesRead);
-                        // ñìîòðèì, åñëè ñ÷èòàííûé áàéò ïðåäñòàâëÿåò êîíå÷íûé ñèìâîë, âûõîäèì
-                        if (count == 0 || bytesRead[0] == '\n') break;
-                        // èíà÷å äîáàâëÿåì â áóôåð
-                        buffer.Add(bytesRead[0]);
+                        var bytesReceived = await clientSocket.ReceiveAsync(singleByteBuffer);
+                        
+                        // Если байты закончились или встретили символ новой строки, выходим
+                        if (bytesReceived == 0 || singleByteBuffer[0] == '\n') break;
+                        
+                        // Иначе добавляем в буфер
+                        receivedDataBuffer.Add(singleByteBuffer[0]);
                     }
 
-                    var tickrr = Encoding.UTF8.GetString(buffer.ToArray());
-                    Console.WriteLine($"Ïîëó÷åíî ñîîáùåíèå: {tickrr}");
-                    string? message;
-                    using (ApplicationContext db = new ApplicationContext())
+                    var receivedTickerSymbol = Encoding.UTF8.GetString(receivedDataBuffer.ToArray());
+                    Console.WriteLine($"Получено сообщение: {receivedTickerSymbol}");
+                    
+                    string? responseMessage;
+                    using (ApplicationContext database = new ApplicationContext())
                     {
-                        var prid = db.Tickers.FirstOrDefault(t => t.ticker == tickrr);
-                        var todaystate = db.Prices.FirstOrDefault(t => t.Id == prid.Id);
-                        Console.WriteLine(todaystate.price);
-                        message = todaystate.price.ToString();
+                        var tickerRecord = database.Tickers.FirstOrDefault(t => t.TickerSymbol == receivedTickerSymbol);
+                        var priceRecord = database.Prices.FirstOrDefault(t => t.Id == tickerRecord.Id);
+                        Console.WriteLine(priceRecord.PriceValue);
+                        responseMessage = priceRecord.PriceValue.ToString();
                     }
 
-                    // îïðåäåëÿåì äàííûå äëÿ îòïðàâêè - òåêóùåå âðåìÿ
-                    byte[] data = Encoding.UTF8.GetBytes(message);
-                    await tcpClient.SendAsync(data);
-                    Console.WriteLine($"Êëèåíòó {tcpClient.RemoteEndPoint} îòïðàâëåíû äàííûå");
+                    // Отправляем данные клиенту
+                    byte[] responseData = Encoding.UTF8.GetBytes(responseMessage);
+                    await clientSocket.SendAsync(responseData);
+                    Console.WriteLine($"Клиенту {clientSocket.RemoteEndPoint} отправлены данные");
                 }
             }
             catch (Exception ex)
